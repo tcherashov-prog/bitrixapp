@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Мое приложение Б24</title>
+    <!-- Подключаем библиотеку Битрикса -->
+    <script src="//api.bitrix24.tech/api/v1/"></script>
+</head>
+<body>
+    <div id="app">Загрузка данных...</div>
+
+    <script>
+        BX24.init(function(){
+            // Запрашиваем данные о текущем пользователе
+            BX24.callMethod('user.current', {}, function(res){
+                if (res.error()) {
+                    console.error(res.error());
+                } else {
+                    const user = res.data();
+                    document.getElementById('app').innerHTML = `
+                        <h1>Привет, ${user.NAME}!</h1>
+                        <p>Это приложение работает на GitHub Pages.</p>
+                    `;
+                }
+            });
+        });
+    </script>
+</body>
+</html>
