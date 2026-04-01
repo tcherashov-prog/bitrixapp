@@ -2,18 +2,129 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Hello World App</title>
-    <!-- Подключаем JS SDK Битрикс24 -->
-    <script src="https://api.bitrix24.com/api/v1/"></script>
+    <script src="//://bitrix24.com"></script>
+    <style>
+        body { font-family: sans-serif; padding: 20px; color: #333; }
+        textarea { width: 100%; height: 200px; margin: 10px 0; border: 1px solid #ddd; border-radius: 5px; padding: 10px; }
+        .btn { background: #2fc6f6; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; }
+        .btn:disabled { background: #ccc; }
+        #log { margin-top: 20px; font-size: 13px; max-height: 200px; overflow-y: auto; border-top: 1px solid #eee; }
+        .status-ok { color: green; }
+        .status-err { color: red; }
+    </style>
 </head>
 <body>
-    <div id="app">Загрузка...</div>
+    <h3>Массовый импорт контактов</h3>
+    
+    <div id="company-block">
+        <button class="btn" onclick="selectCompany()">1. Выбрать компанию</button>
+        <span id="selected-company-name">Компания не выбрана</span>
+    </div>
+
+    <textarea id="data-input" placeholder="Вставьте сюда строки из Google Таблицы (Ctrl+C -> Ctrl+V)"></textarea>
+    
+    <button id="start-btn" class="btn" onclick="startImport()" disabled>2. Запустить импорт</button>
+
+    <div id="log"></div>
+
     <script>
-        // Инициализация приложения
-        BX24.init(function(){
-            document.getElementById('app').innerHTML = '<h1>Hello World!</h1>';
-            console.log('Приложение успешно запущено');
-        });
+        let selectedCompanyId = null;
+
+        // Выбор компании через штатный интерфейс Битрикса
+        function selectCompany() {
+            BX24.selectCRM({
+                entityType: ['company'],
+                multiple: false
+            }, function(result) {
+                if (result && result.company && result.company[0]) {
+                    const co = result.company[0];
+                    selectedCompanyId = co.id.replace('CO_', '');
+                    document.getElementById('selected-company-name').innerText = 'Выбрано: ' + co.title;
+                    document.getElementById('start-btn').disabled = false;
+                }
+            });
+        }
+
+        async function startImport() {
+            const text = document.getElementById('data-input').value.trim();
+            if (!text) return alert('Вставьте данные!');
+
+            const rows = text.split('\n');
+            const log = document.getElementById('log');
+            log.innerHTML = '<b>Начинаем обработку...</b><br>';
+
+            for (let row of rows) {
+                const cols = row.split('\t');
+                
+                // Пример сопоставления по вашей таблице:
+                // cols[0] - Курс, cols[3] - ФИО, cols[5] - Email, cols[6] - Телефон
+                const contactData = {
+                    NAME: cols[3] || 'Без имени',
+                    EMAIL: cols[5],
+                    PHONE: cols[6],
+                    COMPANY_ID: selectedCompanyId
+                };
+
+                if (!contactData.EMAIL) {
+                    addLog('Пропуск: нет Email в строке', 'err');
+                    continue;
+                }
+
+                try {
+                    await processContact(contactData);
+                } catch (e) {
+                    addLog('Ошибка: ' + e.message, 'err');
+                }
+
+                // Небольшая пауза, чтобы не превысить лимиты (2 запроса в сек)
+                await new Promise(r => setTimeout(r, 500));
+            }
+            addLog('<b>Готово!</b>');
+        }
+
+        function processContact(data) {
+            return new Promise((resolve, reject) => {
+                // 1. Ищем контакт
+                BX24.callMethod('crm.contact.list', {
+                    filter: { "EMAIL": data.EMAIL },
+                    select: ["ID"]
+                }, function(res) {
+                    if (res.error()) return reject(res.error());
+
+                    const existing = res.data();
+                    if (existing.length > 0) {
+                        // 2. Обновляем (привязываем компанию)
+                        BX24.callMethod('crm.contact.update', {
+                            id: existing[0].ID,
+                            fields: { "COMPANY_ID": data.COMPANY_ID }
+                        }, (r) => {
+                            addLog(`Обновлен: ${data.NAME} (ID: ${existing[0].ID})`, 'ok');
+                            resolve();
+                        });
+                    } else {
+                        // 3. Создаем новый
+                        BX24.callMethod('crm.contact.add', {
+                            fields: {
+                                "NAME": data.NAME,
+                                "EMAIL": [{ "VALUE": data.EMAIL, "VALUE_TYPE": "WORK" }],
+                                "PHONE": [{ "VALUE": data.PHONE, "VALUE_TYPE": "WORK" }],
+                                "COMPANY_ID": data.COMPANY_ID
+                            }
+                        }, (r) => {
+                            addLog(`Создан: ${data.NAME}`, 'ok');
+                            resolve();
+                        });
+                    }
+                });
+            });
+        }
+
+        function addLog(msg, type) {
+            const div = document.createElement('div');
+            div.className = type === 'ok' ? 'status-ok' : (type === 'err' ? 'status-err' : '');
+            div.innerHTML = msg;
+            document.getElementById('log').prepend(div);
+        }
     </script>
 </body>
 </html>
