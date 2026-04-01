@@ -5,127 +5,140 @@
     <!-- Официальный путь к SDK Битрикс24 -->
     <script src="https://api.bitrix24.com/api/v1/"></script>
     <style>
-        body { font-family: sans-serif; padding: 20px; color: #333; }
-        textarea { width: 100%; height: 200px; margin: 10px 0; border: 1px solid #ddd; border-radius: 5px; padding: 10px; }
-        .btn { background: #2fc6f6; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; }
-        .btn:disabled { background: #ccc; }
-        #log { margin-top: 20px; font-size: 13px; max-height: 200px; overflow-y: auto; border-top: 1px solid #eee; }
-        .status-ok { color: green; }
-        .status-err { color: red; }
+        body { font-family: "Open Sans", sans-serif; padding: 20px; background: #f4f7f8; }
+        .container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        textarea { width: 100%; height: 150px; margin: 15px 0; border: 1px solid #ced4da; border-radius: 4px; padding: 10px; resize: vertical; }
+        .btn { background: #2fc6f6; color: white; border: none; padding: 12px 24px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .btn:hover { background: #1eb5e5; }
+        .btn:disabled { background: #ccc; cursor: not-allowed; }
+        #log { margin-top: 20px; padding: 10px; background: #222; color: #0f0; font-family: monospace; font-size: 12px; height: 200px; overflow-y: auto; border-radius: 4px; }
+        .err { color: #ff5b5b; }
     </style>
 </head>
 <body>
-    <h3>Массовый импорт контактов</h3>
+
+<div class="container">
+    <h2>Массовый импорт обучающихся</h2>
     
-    <div id="company-block">
+    <div id="setup">
         <button class="btn" onclick="selectCompany()">1. Выбрать компанию</button>
-        <span id="selected-company-name">Компания не выбрана</span>
+        <p id="company-name">Компания не выбрана</p>
     </div>
 
-    <textarea id="data-input" placeholder="Вставьте сюда строки из Google Таблицы (Ctrl+C -> Ctrl+V)"></textarea>
+    <textarea id="data-input" placeholder="Вставьте строки из Google Таблицы (ФИО, Email, Телефон...)"></textarea>
     
-    <button id="start-btn" class="btn" onclick="startImport()" disabled>2. Запустить импорт</button>
+    <button id="run-btn" class="btn" onclick="startImport()" disabled>2. Запустить импорт</button>
 
-    <div id="log"></div>
+    <div id="log">Ожидание инициализации Битрикс24...</div>
+</div>
 
-    <script>
-        let selectedCompanyId = null;
+<script>
+    let selectedCompanyId = null;
 
-        // Выбор компании через штатный интерфейс Битрикса
-        function selectCompany() {
-            BX24.selectCRM({
-                entityType: ['company'],
-                multiple: false
-            }, function(result) {
-                if (result && result.company && result.company[0]) {
-                    const co = result.company[0];
-                    selectedCompanyId = co.id.replace('CO_', '');
-                    document.getElementById('selected-company-name').innerText = 'Выбрано: ' + co.title;
-                    document.getElementById('start-btn').disabled = false;
-                }
-            });
-        }
+    // Инициализация библиотеки Битрикса
+    BX24.init(function(){
+        addLog("Приложение готово к работе.");
+    });
 
-        async function startImport() {
-            const text = document.getElementById('data-input').value.trim();
-            if (!text) return alert('Вставьте данные!');
-
-            const rows = text.split('\n');
-            const log = document.getElementById('log');
-            log.innerHTML = '<b>Начинаем обработку...</b><br>';
-
-            for (let row of rows) {
-                const cols = row.split('\t');
-                
-                // Пример сопоставления по вашей таблице:
-                // cols[0] - Курс, cols[3] - ФИО, cols[5] - Email, cols[6] - Телефон
-                const contactData = {
-                    NAME: cols[3] || 'Без имени',
-                    EMAIL: cols[5],
-                    PHONE: cols[6],
-                    COMPANY_ID: selectedCompanyId
-                };
-
-                if (!contactData.EMAIL) {
-                    addLog('Пропуск: нет Email в строке', 'err');
-                    continue;
-                }
-
-                try {
-                    await processContact(contactData);
-                } catch (e) {
-                    addLog('Ошибка: ' + e.message, 'err');
-                }
-
-                // Небольшая пауза, чтобы не превысить лимиты (2 запроса в сек)
-                await new Promise(r => setTimeout(r, 500));
+    function selectCompany() {
+        BX24.selectCRM({
+            entityType: ['company'],
+            multiple: false
+        }, function(result) {
+            if (result && result.company) {
+                // Извлекаем чистый ID компании (из CO_123 получаем 123)
+                selectedCompanyId = result.company.id.replace('CO_', '');
+                document.getElementById('company-name').innerText = "Выбрано: " + result.company.title;
+                document.getElementById('run-btn').disabled = false;
+                addLog("Компания выбрана: ID " + selectedCompanyId);
             }
-            addLog('<b>Готово!</b>');
+        });
+    }
+
+    async function startImport() {
+        const rawData = document.getElementById('data-input').value.trim();
+        if (!rawData) return alert("Вставьте данные из таблицы!");
+
+        const rows = rawData.split('\n');
+        document.getElementById('run-btn').disabled = true;
+        addLog(`Найдено строк для обработки: ${rows.length}`);
+
+        for (let i = 0; i < rows.length; i++) {
+            const cols = rows[i].split('\t');
+            
+            // Маппинг колонок (подправьте индексы под вашу таблицу если нужно)
+            const contact = {
+                NAME: cols[3]?.trim(), // ФИО
+                EMAIL: cols[5]?.trim(), // Email
+                PHONE: cols[6]?.trim()  // Телефон
+            };
+
+            if (!contact.EMAIL) {
+                addLog(`Строка ${i+1}: Пропуск (нет Email)`, 'err');
+                continue;
+            }
+
+            try {
+                await syncContact(contact);
+                // Пауза 500мс для соблюдения лимитов API (2 запроса в сек)
+                await new Promise(r => setTimeout(r, 500));
+            } catch (e) {
+                addLog(`Ошибка в строке ${i+1}: ${e.message}`, 'err');
+            }
         }
+        
+        addLog("--- Импорт завершен ---");
+        document.getElementById('run-btn').disabled = false;
+    }
 
-        function processContact(data) {
-            return new Promise((resolve, reject) => {
-                // 1. Ищем контакт
-                BX24.callMethod('crm.contact.list', {
-                    filter: { "EMAIL": data.EMAIL },
-                    select: ["ID"]
-                }, function(res) {
-                    if (res.error()) return reject(res.error());
+    function syncContact(data) {
+        return new Promise((resolve, reject) => {
+            // 1. Ищем по Email
+            BX24.callMethod('crm.contact.list', {
+                filter: { "EMAIL": data.EMAIL },
+                select: ["ID"]
+            }, function(res) {
+                if (res.error()) return reject(new Error(res.error_description()));
 
-                    const existing = res.data();
-                    if (existing.length > 0) {
-                        // 2. Обновляем (привязываем компанию)
-                        BX24.callMethod('crm.contact.update', {
-                            id: existing[0].ID,
-                            fields: { "COMPANY_ID": data.COMPANY_ID }
-                        }, (r) => {
-                            addLog(`Обновлен: ${data.NAME} (ID: ${existing[0].ID})`, 'ok');
-                            resolve();
-                        });
-                    } else {
-                        // 3. Создаем новый
-                        BX24.callMethod('crm.contact.add', {
-                            fields: {
-                                "NAME": data.NAME,
-                                "EMAIL": [{ "VALUE": data.EMAIL, "VALUE_TYPE": "WORK" }],
-                                "PHONE": [{ "VALUE": data.PHONE, "VALUE_TYPE": "WORK" }],
-                                "COMPANY_ID": data.COMPANY_ID
-                            }
-                        }, (r) => {
-                            addLog(`Создан: ${data.NAME}`, 'ok');
-                            resolve();
-                        });
-                    }
-                });
+                const found = res.data();
+                
+                if (found.length > 0) {
+                    const contactId = found[0].ID;
+                    // 2. Если найден — обновляем привязку к компании
+                    BX24.callMethod('crm.contact.update', {
+                        id: contactId,
+                        fields: { "COMPANY_ID": selectedCompanyId }
+                    }, (r) => {
+                        addLog(`Обновлен контакт: ${data.NAME} (ID: ${contactId})`);
+                        resolve();
+                    });
+                } else {
+                    // 3. Если не найден — создаем новый
+                    BX24.callMethod('crm.contact.add', {
+                        fields: {
+                            "NAME": data.NAME,
+                            "OPENED": "Y",
+                            "COMPANY_ID": selectedCompanyId,
+                            "PHONE": [{ "VALUE": data.PHONE, "VALUE_TYPE": "WORK" }],
+                            "EMAIL": [{ "VALUE": data.EMAIL, "VALUE_TYPE": "WORK" }]
+                        }
+                    }, (r) => {
+                        if (r.error()) return reject(new Error(r.error_description()));
+                        addLog(`Создан новый контакт: ${data.NAME}`);
+                        resolve();
+                    });
+                }
             });
-        }
+        });
+    }
 
-        function addLog(msg, type) {
-            const div = document.createElement('div');
-            div.className = type === 'ok' ? 'status-ok' : (type === 'err' ? 'status-err' : '');
-            div.innerHTML = msg;
-            document.getElementById('log').prepend(div);
-        }
-    </script>
+    function addLog(msg, type = '') {
+        const logDiv = document.getElementById('log');
+        const entry = document.createElement('div');
+        if (type === 'err') entry.className = 'err';
+        entry.innerText = `> ${msg}`;
+        logDiv.prepend(entry);
+    }
+</script>
 </body>
 </html>
